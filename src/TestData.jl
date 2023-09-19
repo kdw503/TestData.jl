@@ -1,11 +1,13 @@
 module TestData
 
-using MAT, GLMakie, Colors, JLD2, Printf, ImageView, Images
+using MAT, GLMakie, Colors, JLD2, Printf, ImageView, Images, Statistics
 using FakeCells, AxisArrays, ImageCore, MappedArrays, DataStructures
 using ImageAxes # avoid using ImageCore.nimages for AxisArray type array
 include("genfakecells.jl")
+include("utils.jl")
 
 export load_data, imsave_data, plot_convergence, plotWH_data, plotH_data
+export noisefilter
 
 if Sys.iswindows()
     datapath="C:\\Users\\kdw76\\WUSTL\\Work\\Data"

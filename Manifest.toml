@@ -2,7 +2,7 @@
 
 julia_version = "1.9.0"
 manifest_format = "2.0"
-project_hash = "7c0fc28bac4275b12eee7b9292423fd7a8052e03"
+project_hash = "964e8baf637dd5ef68e1fe2b0f2fe2005b6429e3"
 
 [[deps.ATK_jll]]
 deps = ["Artifacts", "Glib_jll", "JLLWrappers", "Libdl"]

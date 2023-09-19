@@ -50,9 +50,10 @@ function gaussian2D(sigma, imgsz::NTuple{2}, lengthT, revent=10; fovsz::NTuple{2
     dx = rand(-jitter:jitter,2,lengthT)   # simulate some registration jitter
     dx = map(x->round(Int, x), dx .+ range(0, stop=drift, length=lengthT)')
     img₂ = makeimages(imgsz..., S₂, centers, T₂, dx)
-    signalpwr = sum(img₂.^2)/length(img₂)
+    signalpwr = sum(img₂.^2)
     bg = maximum(img₂)*bias
-    noise = randn(size(img₂)).*sqrt(signalpwr/10^(SNR/10))
+    noise = randn(size(img₂)); noisepwr0 = sum(noise.^2)
+    noiseamp = sqrt(signalpwr/10^(SNR/10)/noisepwr0); noise .*= noiseamp
     img₂ = img₂ .+ bg + noise # add noise and bg
     img₂a = AxisArray(img₂, :x, :y, :time)
     gtW, gtH, gtWimgc = makegt(S₂,centers,T₂,imgsz,ncells,bg; gtincludebg=gtincludebg)
