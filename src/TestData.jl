@@ -6,7 +6,7 @@ using ImageAxes # avoid using ImageCore.nimages for AxisArray type array
 include("genfakecells.jl")
 include("utils.jl")
 
-export load_data, imsave_data, plot_convergence, plotWH_data, plotH_data
+export load_data, imsave_data, imsave_data_gt, plot_convergence, plotWH_data, plotH_data
 export noisefilter
 
 if Sys.iswindows()
@@ -201,16 +201,17 @@ function register(imgs,fixed_index,mxshift, mxrot, margin; method=:rigid, presmo
     rimgs
 end
 
-function load_fakecells(;SNR=10, user_ncells=0, imgsz=(40,20), fovsz=imgsz, lengthT=1000, bias=0.1, useCalciumT=false,
-        jitter=0, inhibitindices=0, gtincludebg=false, only2cells=false, issave=true, isload=true, save_maxSNR_X=false,
-        save_X=false, save_gtimg=false)
+function load_fakecells(;SNR=10, user_ncells=0, sigma=5.0, imgsz=(40,20), fovsz=imgsz, lengthT=1000,
+        bias=0.1, useCalciumT=false, jitter=0, inhibitindices=0, gtincludebg=false, only2cells=false,
+        issave=true, isload=true, save_maxSNR_X=false, save_X=false, save_gtimg=false)
     dirpath = joinpath(datapath,"fakecells")
     calciumstr = useCalciumT ? "_calcium" : ""
     fprefix = "fakecells$(inhibitindices)$(calciumstr)_sz$(imgsz)_lengthT$(lengthT)_J$(jitter)_SNR$(SNR)_bias$(bias)"
     dfprefix = joinpath(dirpath,fprefix)
-    X, imgsz, fakecells_dic, img_nl, maxSNR_X = loadfakecell(Float64, dfprefix*".jld2", only2cells=only2cells,
-        fovsz=fovsz, imgsz=imgsz, lengthT=lengthT, bias=bias, useCalciumT=useCalciumT, jitter=jitter, SNR=SNR,
-        inhibitindices=inhibitindices, gtincludebg=gtincludebg, issave=issave, isload=isload);
+    X, imgsz, fakecells_dic, img_nl, maxSNR_X = loadfakecell(Float64, dfprefix*".jld2"; sigma=sigma,
+        only2cells=only2cells, fovsz=fovsz, imgsz=imgsz, lengthT=lengthT, bias=bias, useCalciumT=useCalciumT,
+        jitter=jitter, SNR=SNR, inhibitindices=inhibitindices, gtincludebg=gtincludebg, issave=issave,
+        isload=isload);
     gtncells = fakecells_dic["gt_ncells"]
     if save_gtimg
         gtW = fakecells_dic["gtW"]; gtH = fakecells_dic["gtH"]
@@ -238,8 +239,8 @@ end
 # c = jldopen("mydata.jld", "r") do file
 #     read(file, "A")
 # end
-function loadfakecell(T::Type, fname; lengthT=100, imgsz=(40,20), fovsz=imgsz, SNR=10, bias=0.1,
-        useCalciumT=false, jitter=0, distance = 10, only2cells=false, overlap_rate = 0.3,
+function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fovsz=imgsz, SNR=10,
+        bias=0.1, useCalciumT=false, jitter=0, distance = 10, only2cells=false, overlap_rate = 0.3,
         inhibitindices=0, gtincludebg=true, issave=true, isload=true)
    if isload && isfile(fname)
         fakecells_dic = JLD2.load(fname)
@@ -253,10 +254,10 @@ function loadfakecell(T::Type, fname; lengthT=100, imgsz=(40,20), fovsz=imgsz, S
         gtbg = fakecells_dic["gtbg"]
         imgsz = fakecells_dic["imgsz"]
         SNR = fakecells_dic["SNR"]
+        sigma = fakecells_dic["sigma"]
     else
         @show fname
         isload && @warn "$fname not found. Generating fakecell data..."
-        sigma = 5; imgsz = imgsz; lengthT = lengthT
         if only2cells
             gt_ncells, imgrs, img_nl, gtW, gtH, gtWimgc, gtbg = gaussian_two_objs(sigma, imgsz, lengthT,
                                     distance, overlap_rate; jitter=jitter, fovsz=fovsz, SNR = SNR)
@@ -276,6 +277,7 @@ function loadfakecell(T::Type, fname; lengthT=100, imgsz=(40,20), fovsz=imgsz, S
         fakecells_dic["gtbg"] = gtbg
         fakecells_dic["imgsz"] = imgsz
         fakecells_dic["SNR"] = SNR
+        fakecells_dic["sigma"] = sigma
         if issave
             JLD2.save(fname,fakecells_dic)
         end
@@ -287,9 +289,9 @@ function loadfakecell(T::Type, fname; lengthT=100, imgsz=(40,20), fovsz=imgsz, S
     return X, imgsz, fakecells_dic, img_nl, maxSNR_X
 end
 
-function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), fovsz=imgsz, lengthT=1000, useCalciumT=false,
-        jitter=0, bias=0.1, inhibitindices=0, gtincludebg=false, issave=true, isload=true, save_maxSNR_X=false,
-        save_X=false, save_gtimg=false)
+function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), sigma=5.0, fovsz=imgsz, lengthT=1000,
+        useCalciumT=false, jitter=0, bias=0.1, inhibitindices=0, gtincludebg=false, issave=true,
+        isload=true, save_maxSNR_X=false, save_X=false, save_gtimg=false)
     if dataset == :cbclface
         println("loading CBCL face dataset")
         load_cbcl()
@@ -318,14 +320,15 @@ function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), fovsz=imgsz, l
         load_inhibit_real()
     elseif dataset == :fakecells
         println((isload ? "Loading" : "Generating") * " image of fakecells")
-        load_fakecells(only2cells=false, SNR=SNR, user_ncells=user_ncells, imgsz=imgsz, fovsz=fovsz, lengthT=lengthT,
-            bias=bias, useCalciumT=useCalciumT, jitter=jitter, inhibitindices=inhibitindices, gtincludebg=gtincludebg,
-            issave=issave, isload=isload, save_maxSNR_X=save_maxSNR_X, save_X = save_X, save_gtimg=save_gtimg)
+        load_fakecells(only2cells=false, sigma=sigma, SNR=SNR, user_ncells=user_ncells, imgsz=imgsz,
+            fovsz=fovsz, lengthT=lengthT, bias=bias, useCalciumT=useCalciumT, jitter=jitter,
+            inhibitindices=inhibitindices, gtincludebg=gtincludebg, issave=issave, isload=isload,
+            save_maxSNR_X=save_maxSNR_X, save_X = save_X, save_gtimg=save_gtimg)
     elseif dataset == :fakecellsmall
         println((isload ? "Loading" : "Generating") * "image of fakecells with only two cells")
-        load_fakecells(only2cells=true, SNR=SNR, user_ncells=6, imgsz=(20,30), lengthT=lengthT, bias=bias,
-            gtincludebg=gtincludebg, issave=issave, isload=isload, useCalciumT=useCalciumT,jitter=jitter,
-            save_maxSNR_X=save_maxSNR_X, save_gtimg=save_gtimg)
+        load_fakecells(only2cells=true, sigma=sigma, SNR=SNR, user_ncells=6, imgsz=(20,30),
+            lengthT=lengthT, bias=bias, gtincludebg=gtincludebg, issave=issave, isload=isload,
+            useCalciumT=useCalciumT,jitter=jitter, save_maxSNR_X=save_maxSNR_X, save_gtimg=save_gtimg)
     else
         error("Not supported dataset")
     end
