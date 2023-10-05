@@ -1,6 +1,6 @@
 module TestData
 
-using MAT, GLMakie, Colors, JLD2, Printf, ImageView, Images, Statistics
+using MAT, Colors, JLD2, Printf, Images, Statistics
 using FakeCells, AxisArrays, ImageCore, MappedArrays, DataStructures
 using ImageAxes # avoid using ImageCore.nimages for AxisArray type array
 include("genfakecells.jl")
@@ -9,10 +9,26 @@ include("utils.jl")
 export load_data, imsave_data, imsave_data_gt, plot_convergence, plotWH_data, plotH_data
 export noisefilter
 
+is_X11_available = true
+is_ImageView_available = true
 if Sys.iswindows()
     datapath="C:\\Users\\kdw76\\WUSTL\\Work\\Data"
 elseif Sys.isunix()
     datapath=ENV["MYSTORAGE"]*"/work/Data"
+    try
+        run(`ls /usr/bin/x11vnc`) # check if this is noVNC graphical platform
+        using ImageView, GLMakie
+        using Gtk.ShortNames
+        GLMakie.activate!()
+        global AMakie = GLMakie
+    catch # not a graphical platform
+        @warn("Not a RIS noVNC graphical platform")
+        using CairoMakie
+        global is_X11_available = false
+        global is_ImageView_available = false
+        CairoMakie.activate!()
+        global AMakie = CairoMakie
+    end
 end
 
 set_datapath(path) = (datapath = path)
@@ -527,7 +543,6 @@ function plot_convergence(fprefix, x_abss, f_xs, f_x_abss=[]; title="")
     ax
 end
 #=========== Plot W and H ====================================================#
-using GLMakie
 
 function plotWH_data(dataset,fprefix,W,H; resolution = (800,400), space=1.0, issave=true,
             colors=distinguishable_colors(size(W,2); lchoices=range(0, stop=50, length=5)))
@@ -540,12 +555,12 @@ end
 
 function plotWH_audio_data(fprefix,W,H; resolution = (800,400), space=1.0, title="",issave=true,
         colors=distinguishable_colors(size(W,2); lchoices=range(0, stop=50, length=5)))
-    fig = GLMakie.Figure(resolution = resolution)
+    fig = AMakie.Figure(resolution = resolution)
     fn = fprefix*"_plot_WH.png"
-    ax1 = GLMakie.Axis(fig[1, 1], xlabel = "W column", ylabel = "Frequency (kHz)", xgridvisible=false,
+    ax1 = AMakie.Axis(fig[1, 1], xlabel = "W column", ylabel = "Frequency (kHz)", xgridvisible=false,
                 xticksvisible=false, xtickformat = "", ygridvisible=false, title = title)
     plotW_data(ax1, W, colors, rng=0:size(W,1)-1, scale=:linear, rotate=true, space=space)
-    ax2 = GLMakie.Axis(fig[1, 2], xlabel = "Time[s]", ylabel = "Activations", xgridvisible=false,
+    ax2 = AMakie.Axis(fig[1, 2], xlabel = "Time[s]", ylabel = "Activations", xgridvisible=false,
                 ygridvisible=false, yticksvisible=false, ytickformat="", title = title)
     plotW_data(ax2, H', colors, rng=0:size(H,2)-1, scale=:linear, rotate=false, space=space)
     issave && save(fn,fig,px_per_unit=2)
@@ -562,9 +577,9 @@ end
 
 function plotH_data(fprefix, H; resolution = (800,400), space=1.0, title="",issave=true,
         colors=distinguishable_colors(size(H,1); lchoices=range(0, stop=50, length=5)))
-    fig = GLMakie.Figure(resolution = resolution)
+    fig = AMakie.Figure(resolution = resolution)
     fn = fprefix*"_plot_H.png"
-    ax2 = GLMakie.Axis(fig[1, 1], xlabel = "Time index", ylabel = "Intensity", xgridvisible=true,
+    ax2 = AMakie.Axis(fig[1, 1], xlabel = "Time index", ylabel = "Intensity", xgridvisible=true,
                 ygridvisible=true, yticksvisible=true, ytickformat="", title = title)
     plotW_data(ax2, H', colors, rng=0:size(H,2)-1, scale=:linear, rotate=false, space=space)
     issave && save(fn,fig,px_per_unit=2)
@@ -585,12 +600,12 @@ function plotH_urban(H; title="", titles=fill("",size(H,1)))
     n = size(H,2); rng = 0:n-1
     black=RGB{N0f8}(0.0,0.0,0.0)
     f = Figure(resolution = (900,1500))
-    ax11=GLMakie.Axis(f[1,1],title=titles[1], titlesize=25)
-    ax12=GLMakie.Axis(f[1,2],title=titles[2], titlesize=25)
-    ax21=GLMakie.Axis(f[2,1],title=titles[3], titlesize=25)
-    ax22=GLMakie.Axis(f[2,2],title=titles[4], titlesize=25)
-    ax31=GLMakie.Axis(f[3,1],title=titles[5], titlesize=25)
-    ax32=GLMakie.Axis(f[3,2],title=titles[6], titlesize=25)
+    ax11=AMakie.Axis(f[1,1],title=titles[1], titlesize=25)
+    ax12=AMakie.Axis(f[1,2],title=titles[2], titlesize=25)
+    ax21=AMakie.Axis(f[2,1],title=titles[3], titlesize=25)
+    ax22=AMakie.Axis(f[2,2],title=titles[4], titlesize=25)
+    ax31=AMakie.Axis(f[3,1],title=titles[5], titlesize=25)
+    ax32=AMakie.Axis(f[3,2],title=titles[6], titlesize=25)
     ln1 = lines!(ax11, rng, H[1,:], color=black)
     ln2 = lines!(ax12, rng, H[2,:], color=black)
     ln3 = lines!(ax21, rng, H[3,:], color=black)
@@ -601,15 +616,6 @@ function plotH_urban(H; title="", titles=fill("",size(H,1)))
 end
 
 #========= Image show and save ===========================================#
-is_ImageView_available = true
-try
-    Sys.islinux() && run(`ls /usr/bin/x11vnc`) # check if this is noVNC graphical platform
-    using ImageView
-    using Gtk.ShortNames
-catch # not a graphical platform
-    @warn("Not a RIS noVNC graphical platform")
-    global is_ImageView_available = false
-end
 
 function mkimgW(W::Matrix{T},imgsz; gridcols=size(W,2), borderwidth=1, borderval=0.7, scalemtd=:maxwhole,
         colors=(colorant"green1", colorant"white", colorant"magenta")) where T
@@ -669,7 +675,7 @@ imshowW(W,imgsz; title="", gridcols=size(W,2), borderwidth=1, borderval=0.7, sca
         colors=(colorant"green1", colorant"white", colorant"magenta"))
 """
 function imshowW(W,imgsz; title="", kwargs...)
-    if true #is_ImageView_available
+    if is_ImageView_available
         wimg = mkimgW(W,imgsz; kwargs...)
         gui_dict = ImageView.imshow(wimg)
         #set_gtk_property!(gui_dict["gui"]["window"], :title, title)
