@@ -1,13 +1,14 @@
+#__precompile__(false)
 module TestData
 
-using MAT, Colors, JLD2, Printf, Images, Statistics
+using MAT, Colors, JLD2, Printf, Images, Statistics, VideoIO
 using FakeCells, AxisArrays, ImageCore, MappedArrays, DataStructures
 using ImageAxes # avoid using ImageCore.nimages for AxisArray type array
 include("genfakecells.jl")
 include("utils.jl")
 
 export load_data, imsave_data, imsave_data_gt, plot_convergence, plotWH_data, plotH_data
-export noisefilter
+export imsave_reconstruct
 
 is_X11_available = true
 is_ImageView_available = true
@@ -15,20 +16,20 @@ if Sys.iswindows()
     datapath="C:\\Users\\kdw76\\WUSTL\\Work\\Data"
 elseif Sys.isunix()
     datapath=ENV["MYSTORAGE"]*"/work/Data"
-    try
-        run(`ls /usr/bin/x11vnc`) # check if this is noVNC graphical platform
-        using ImageView, GLMakie
-        using Gtk.ShortNames
-        GLMakie.activate!()
-        global AMakie = GLMakie
-    catch # not a graphical platform
-        @warn("Not a RIS noVNC graphical platform")
-        using CairoMakie
-        global is_X11_available = false
-        global is_ImageView_available = false
-        CairoMakie.activate!()
-        global AMakie = CairoMakie
-    end
+end
+try
+    Sys.isunix() && run(`ls /usr/bin/x11vnc`) # check if this is noVNC graphical platform
+    using ImageView, GLMakie
+    using Gtk.ShortNames
+    GLMakie.activate!()
+    global AMakie = GLMakie
+catch # not a graphical platform
+    @warn("Not a RIS noVNC graphical platform")
+    using CairoMakie
+    global is_X11_available = false
+    global is_ImageView_available = false
+    CairoMakie.activate!()
+    global AMakie = CairoMakie
 end
 
 set_datapath(path) = (datapath = path)
@@ -134,7 +135,7 @@ function load_neurofinder_small()
     # save("neurofinder.02.00.cut.gif",orgimg.*2)
     imgsz = size(orgimg)[1:end-1]; lengthT = size(orgimg)[end]
     X = Matrix{Float64}(reshape(orgimg, prod(imgsz), lengthT))
-    ncells = 30; gtncells = 16
+    ncells = 20; gtncells = 14
     X, imgsz, lengthT, ncells, gtncells, Dict("imgrs"=>orgimg, "cells"=>dcells["cells"])
 end
 
@@ -152,7 +153,7 @@ end
 function load_audio()
     dirpath = joinpath(datapath,"audio")
     vars = load(joinpath(dirpath,"Maryhadalittlelamb.jld2")) # 257 frequency bins X 295 frames
-    X=vars["Maryhadalittlelamb"]; lengthT = size(X)[end]; imgsz = size(X)
+    X=vars["Maryhadalittlelamb"]; lengthT = size(X)[end]; imgsz = size(X)[1:end-1]
     # img = reshape(X, (nRow, nCol, nBand));
     gtncells = 3; ncells = gtncells
     X, imgsz, lengthT, ncells, gtncells, Dict()
@@ -217,10 +218,10 @@ function register(imgs,fixed_index,mxshift, mxrot, margin; method=:rigid, presmo
     rimgs
 end
 
-function load_fakecells(;SNR=10, user_ncells=0, sigma=5.0, imgsz=(40,20), fovsz=imgsz, lengthT=1000,
+function load_fakecells(;dpath=datapath, SNR=10, user_ncells=0, sigma=5.0, imgsz=(40,20), fovsz=imgsz, lengthT=1000,
         bias=0.1, useCalciumT=false, jitter=0, inhibitindices=0, gtincludebg=false, only2cells=false,
         issave=true, isload=true, save_maxSNR_X=false, save_X=false, save_gtimg=false)
-    dirpath = joinpath(datapath,"fakecells")
+    dirpath = joinpath(dpath,"fakecells")
     calciumstr = useCalciumT ? "_calcium" : ""
     fprefix = "fakecells$(inhibitindices)$(calciumstr)_sz$(imgsz)_lengthT$(lengthT)_J$(jitter)_SNR$(SNR)_bias$(bias)"
     dfprefix = joinpath(dirpath,fprefix)
@@ -248,13 +249,6 @@ function load_fakecells(;SNR=10, user_ncells=0, sigma=5.0, imgsz=(40,20), fovsz=
     X, imgsz, lengthT, ncells, gtncells, fakecells_dic
 end
 
-# TODO: load and save sometimes cause error. Do I need to change to below fucntions?
-# jldopen("mydata.jld", "w") do file
-#     write(file, "A", A)  # alternatively, say "@write file A"
-# end
-# c = jldopen("mydata.jld", "r") do file
-#     read(file, "A")
-# end
 function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fovsz=imgsz, SNR=10,
         bias=0.1, useCalciumT=false, jitter=0, distance = 10, only2cells=false, overlap_rate = 0.3,
         inhibitindices=0, gtincludebg=true, issave=true, isload=true)
@@ -272,7 +266,7 @@ function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fov
         SNR = fakecells_dic["SNR"]
         sigma = fakecells_dic["sigma"]
     else
-        @show fname
+        # @show fname
         isload && @warn "$fname not found. Generating fakecell data..."
         if only2cells
             gt_ncells, imgrs, img_nl, gtW, gtH, gtWimgc, gtbg = gaussian_two_objs(sigma, imgsz, lengthT,
@@ -307,7 +301,7 @@ end
 
 function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), sigma=5.0, fovsz=imgsz, lengthT=1000,
         useCalciumT=false, jitter=0, bias=0.1, inhibitindices=0, gtincludebg=false, issave=true,
-        isload=true, save_maxSNR_X=false, save_X=false, save_gtimg=false)
+        isload=true, dpath=datapath, save_maxSNR_X=false, save_X=false, save_gtimg=false, verbose=false)
     if dataset == :cbclface
         println("loading CBCL face dataset")
         load_cbcl()
@@ -335,14 +329,14 @@ function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), sigma=5.0, fov
     elseif dataset == :inhibit_real
         load_inhibit_real()
     elseif dataset == :fakecells
-        println((isload ? "Loading" : "Generating") * " image of fakecells")
-        load_fakecells(only2cells=false, sigma=sigma, SNR=SNR, user_ncells=user_ncells, imgsz=imgsz,
+        verbose && println((isload ? "Loading" : "Generating") * " image of fakecells")
+        load_fakecells(only2cells=false, dpath=dpath, sigma=sigma, SNR=SNR, user_ncells=user_ncells, imgsz=imgsz,
             fovsz=fovsz, lengthT=lengthT, bias=bias, useCalciumT=useCalciumT, jitter=jitter,
             inhibitindices=inhibitindices, gtincludebg=gtincludebg, issave=issave, isload=isload,
             save_maxSNR_X=save_maxSNR_X, save_X = save_X, save_gtimg=save_gtimg)
     elseif dataset == :fakecellsmall
         println((isload ? "Loading" : "Generating") * "image of fakecells with only two cells")
-        load_fakecells(only2cells=true, sigma=sigma, SNR=SNR, user_ncells=6, imgsz=(20,30),
+        load_fakecells(only2cells=true, dpath=dpath, sigma=sigma, SNR=SNR, user_ncells=6, imgsz=(20,30),
             lengthT=lengthT, bias=bias, gtincludebg=gtincludebg, issave=issave, isload=isload,
             useCalciumT=useCalciumT,jitter=jitter, save_maxSNR_X=save_maxSNR_X, save_gtimg=save_gtimg)
     else
@@ -353,36 +347,38 @@ end
 #======== Image Save ==========================================================#
 
 function imsave_data(dataset,fprefix,W,H,imgsz,lengthT; mssdwstr="", mssdhstr="",
-        signedcolors=nothing,gridcols=nothing,saveH=true)
+        scalemtd=:maxwhole, mxabs=0.1, signedcolors=nothing,gridcols=nothing,saveH=true,verbose=false)
     if dataset == :cbclface
-        println("Saving image of CBCL face dataset")
+        verbose && println("Saving image of CBCL face dataset")
         imsave_cbcl(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :orlface
-        println("Saving image of ORL face dataset")
+        verbose && println("Saving image of ORL face dataset")
         imsave_orl(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :natural
-        println("Saving image of natural image")
+        verbose && println("Saving image of natural image")
         imsave_natural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :onoffnatural
-        println("Saving image of On/OFF-contrast filtered natural image")
+        verbose && println("Saving image of On/OFF-contrast filtered natural image")
         imsave_onoffnatural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :urban
-        println("Saving hyperspectral urban dataset")
+        verbose && println("Saving image of hyperspectral urban dataset")
         imsave_urban(fprefix,W[:,2:7],H[2:7,:],imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :audio
         @warn "$(dataset) dataset doesn't have a image save method"
     elseif dataset ∈ [:neurofinder, :neurofinder_small, :inhibit_real]
-        println("Saving image of Neurofinder dataset")
-        imsave_neurofinder(fprefix,W,H,imgsz,lengthT, signedcolors=signedcolors, gridcols=gridcols, saveH=saveH)
+        verbose && println("Saving image of Neurofinder dataset")
+        imsave_neurofinder(fprefix,W,H,imgsz,lengthT, mxabs=mxabs, signedcolors=signedcolors,
+            scalemtd=scalemtd, gridcols=gridcols, saveH=saveH)
     elseif dataset == :fakecells
-        println("Saving image of fakecells")
+        verbose && println("Saving image of fakecells")
         imsave_fakecell(fprefix,W,H,imgsz,lengthT; mssdwstr=mssdwstr, mssdhstr=mssdhstr,
-                        signedcolors=signedcolors, saveH=saveH)
+            scalemtd=scalemtd, signedcolors=signedcolors, saveH=saveH)
     elseif dataset == :fakecellsmall
-        println("loading fakecells with only two cells")
+        verbose && println("Saving image of fakecells with only two cells")
         imsave_fakecell(fprefix,W,H,imgsz,lengthT; mssdwstr=mssdwstr, mssdhstr=mssdhstr,
-                        signedcolors=signedcolors, saveH=saveH)
+            scalemtd=scalemtd, signedcolors=signedcolors, saveH=saveH)
     end
+    nothing
 end
 
 dgwm() = (colorant"darkgreen", colorant"white", colorant"magenta")
@@ -417,15 +413,16 @@ function imsave_cbcl(fprefix,W,H,imgsz,tlength; gridcols=Int(ceil(sqrt(size(W,2)
         colors=signedcolors)
 end
 
-function imsave_reconstruct(fprefix,X,W,H,imgsz; index=100, gridcols=7, clamp_level=1.0) # 0.2 for urban
+function imsave_reconstruct(fprefix,X,W,H,imgsz; orgimg = nothing, index=100, gridcols=7, clamp_level=1.0) # 0.2 for urban
     # TODO: save all face pictures
     # imsave("cbcl_faces.png", X[:,1:49], imgsz;; gridcols=7, borderwidth=1, colors=bbw())
     intplimg = interpolate(reshape(H[:,index],gridcols,gridcols),3)
     imsaveW(fprefix*"_H$(index).png",reshape(intplimg,length(intplimg),1),size(intplimg))
     reconimg = W*H[:,index]
+    mse = orgimg === nothing ? NaN : norm(vec(orgimg)-reconimg)^2/length(reconimg)
     W_max = maximum(abs,reconimg)*clamp_level; W_clamped = clamp.(reconimg,0.,W_max)
     #save(fprefix*"_Org$index.png", map(clamp01nan, reshape(X[:,index],imgsz...)))
-    save(fprefix*"_recon$index.png", map(clamp01nan, reshape(W_clamped,imgsz...)))
+    save(fprefix*"_recon$(index)_mse$(mse).png", map(clamp01nan, reshape(W_clamped,imgsz...)))
 end
 
 function imsave_orl(fprefix,W,H,imgsz,tlength; gridcols=Int(ceil(sqrt(size(W,2)))),
@@ -466,24 +463,26 @@ function imsave_reconstruct_urban(fprefix,X,W,H,imgsz; index=100, clamp_level=0.
     #save(fprefix*"_CG_clamped$index.png", map(clamp01nan, reshape(clamp.(W,0.,Inf)*clamp.(H[:,index],0.,Inf),imgsz...)))
 end
 
-function imsave_neurofinder(fprefix,W,H,imgsz,tlength; gridcols=nothing, borderwidth=1,
-        signedcolors=nothing, saveH=true)
+function imsave_neurofinder(fprefix,W,H,imgsz,tlength; gridcols=nothing, borderwidth=1,scalemtd=:maxwhole,
+        mxabs=0.1, signedcolors=nothing, saveH=true)
     #@show ncells, gridcols
     signedcolors = signedcolors === nothing ? g1wm() : signedcolors
     gridcols = gridcols === nothing ? 5 : gridcols
     ncells = size(W,2)
     ncells < gridcols && @warn "ncells($(ncells)) should not be smaller than gridcols($(gridcols))"
-    for i = 1:ncells÷gridcols
-        imsaveW(fprefix*"_W_$(i).png",W[:,((i-1)*gridcols+1):(i*gridcols)],imgsz;
-                gridcols=gridcols,colors=signedcolors,borderwidth=borderwidth)
-    end
+    # for i = 1:ncells÷gridcols
+    #     imsaveW(fprefix*"_W_$(i).png",W[:,((i-1)*gridcols+1):(i*gridcols)],imgsz;
+    #             gridcols=gridcols,scalemtd=scalemtd,colors=signedcolors,borderwidth=borderwidth)
+    # end
+    imsaveW(fprefix*"_W.png",W,imgsz; mxabs=mxabs, gridcols=gridcols,scalemtd=scalemtd,colors=signedcolors,borderwidth=borderwidth)
+
     saveH && imsaveH(fprefix*"_H.png", H, tlength; colors=signedcolors)
 end
 
-function imsave_fakecell(fprefix,W,H,imgsz,tlength; mssdwstr="", mssdhstr="",
+function imsave_fakecell(fprefix,W,H,imgsz,tlength; mssdwstr="", mssdhstr="", scalemtd = :maxwhole,
         gridcols=size(W,2), borderwidth=1, signedcolors=nothing, saveH=true)
     signedcolors = signedcolors === nothing ? g1wm() : signedcolors
-    imsaveW(fprefix*"_W$(mssdwstr).png", W, imgsz; gridcols=gridcols,
+    imsaveW(fprefix*"_W$(mssdwstr).png", W, imgsz; gridcols=gridcols, scalemtd=scalemtd,
             borderwidth=borderwidth, colors=signedcolors)
     saveH && imsaveH(fprefix*"_H$(mssdhstr).png", H, tlength; colors=signedcolors)
 end
@@ -501,11 +500,13 @@ function match_order_to_gt(W,H,gtW,gtH)
     copy(W[:,neworder]), copy(H[neworder,:]), mssd, mssdH
 end
 
-function imsave_data_gt(dataset,fprefix,W,H,gtW,gtH,imgsz,lengthT; signedcolors=nothing, saveH=true)
+function imsave_data_gt(dataset,fprefix,W,H,gtW,gtH,imgsz,lengthT; scalemtd=:maxwhole,
+        mxabs=0.1, signedcolors=nothing, saveH=true, verbose=true)
     signedcolors = signedcolors === nothing ? g1wm() : signedcolors
     Wno, Hno, mssd, mssdH = match_order_to_gt(W,H,gtW,gtH)
     imsave_data(dataset,fprefix,Wno,Hno,imgsz,lengthT; mssdwstr="_MSE"*@sprintf("%1.4f",mssd),
-            mssdhstr="_MSE"*@sprintf("%1.4f",mssdH), signedcolors=signedcolors, saveH=saveH)
+            mssdhstr="_MSE"*@sprintf("%1.4f",mssdH), scalemtd=scalemtd, mxabs=mxabs,
+            signedcolors=signedcolors, saveH=saveH, verbose = verbose)
 end
 #=========== Plot Convergence ====================================================#
 function plot_convergence(fprefix, x_abss, xw_abss, xh_abss, f_xs; title="")
@@ -544,7 +545,7 @@ function plot_convergence(fprefix, x_abss, f_xs, f_x_abss=[]; title="")
 end
 #=========== Plot W and H ====================================================#
 
-function plotWH_data(dataset,fprefix,W,H; resolution = (800,400), space=1.0, issave=true,
+function plotWH_data(dataset,fprefix,W,H; resolution = (800,400), space=0., issave=true,
             colors=distinguishable_colors(size(W,2); lchoices=range(0, stop=50, length=5)))
     if dataset == :audio
         plotWH_audio_data(fprefix,W,H; resolution=resolution, space=space, colors=colors, issave=issave)
@@ -553,47 +554,60 @@ function plotWH_data(dataset,fprefix,W,H; resolution = (800,400), space=1.0, iss
     end
 end
 
-function plotWH_audio_data(fprefix,W,H; resolution = (800,400), space=1.0, title="",issave=true,
+function plotWH_audio_data(fprefix,W,H; resolution = (800,400), space=0., title="",issave=true,
         colors=distinguishable_colors(size(W,2); lchoices=range(0, stop=50, length=5)))
     fig = AMakie.Figure(resolution = resolution)
     fn = fprefix*"_plot_WH.png"
     ax1 = AMakie.Axis(fig[1, 1], xlabel = "W column", ylabel = "Frequency (kHz)", xgridvisible=false,
                 xticksvisible=false, xtickformat = "", ygridvisible=false, title = title)
-    plotW_data(ax1, W, colors, rng=0:size(W,1)-1, scale=:linear, rotate=true, space=space)
+    plotW_data!(ax1, W, colors, rng=0:size(W,1)-1, scale=:linear, rotate=true, space=space)
     ax2 = AMakie.Axis(fig[1, 2], xlabel = "Time[s]", ylabel = "Activations", xgridvisible=false,
                 ygridvisible=false, yticksvisible=false, ytickformat="", title = title)
-    plotW_data(ax2, H', colors, rng=0:size(H,2)-1, scale=:linear, rotate=false, space=space)
+    plotW_data!(ax2, H', colors, rng=0:size(H,2)-1, scale=:linear, rotate=false, space=space)
     issave && save(fn,fig,px_per_unit=2)
     fig
 end
 
-function plotW_data(ax::Makie.Axis, W::AbstractArray, colors::AbstractVector; rng=0:size(W,1)-1,
-        scale=:linear, rotate=false, space=1.0)
+function plotW_data!(ax::Makie.Axis, W::AbstractArray, colors::AbstractVector; rng=0:size(W,1)-1,
+        labels=string.(collect(1:size(W,2))), scale=:linear, rotate=false, space=0)
+    lns = []
     for (i,w) in enumerate(eachcol(W))
         spacei = (i-1)*space
-        rotate ? lines!(ax,w.+spacei,rng,color=colors[i]) : lines!(ax,rng,w.+spacei,color=colors[i])
+        ln = rotate ? lines!(ax,w.+spacei,rng,label=labels[i],color=colors[i]) :
+                      lines!(ax,rng,w.+spacei,label=labels[i],color=colors[i])
+        push!(lns,ln)
     end
+    lns
 end
 
-function plotH_data(fprefix, H; resolution = (800,400), space=1.0, title="",issave=true,
-        colors=distinguishable_colors(size(H,1); lchoices=range(0, stop=50, length=5)))
+function plotH_data(fprefix, H; resolution = (800,400), space=0., title="",issave=true,xgridvisible=true,
+        xticksvisible=true, xlabelvisible = true,
+        xlabel = "Time index", ylabel = "Intensity", ygridvisible=true, yticksvisible=true,
+        ytickformat=values->["$value" for value in values], #  {:.3f}
+        labels=string.(collect(1:size(H,1))), show_legend=true,
+        colors=distinguishable_colors(size(H,1); lchoices=size(H,1) == 1 ? [1] : range(0, stop=50, length=size(H,1))))
     fig = AMakie.Figure(resolution = resolution)
     fn = fprefix*"_plot_H.png"
-    ax2 = AMakie.Axis(fig[1, 1], xlabel = "Time index", ylabel = "Intensity", xgridvisible=true,
-                ygridvisible=true, yticksvisible=true, ytickformat="", title = title)
-    plotW_data(ax2, H', colors, rng=0:size(H,2)-1, scale=:linear, rotate=false, space=space)
+    ax2 = AMakie.Axis(fig[1, 1], xgridvisible=xgridvisible, xticksvisible=xticksvisible, xlabelvisible=xlabelvisible,
+            xlabel=xlabel, ylabel=ylabel, ygridvisible=ygridvisible, yticksvisible=yticksvisible, ytickformat=ytickformat,
+            title = title) # ytickformat="{:.2f}"
+    lns = plotW_data!(ax2, H', colors, rng=0:size(H,2)-1, labels=labels, scale=:linear, rotate=false, space=space)
+    show_legend && axislegend(ax2, position = :rb, labelsize=15) # (fig[1,2] = Legend(fig[1,1],lns,labels))
     issave && save(fn,fig,px_per_unit=2)
     fig
 end
 
 #=========== Plot H ====================================================#
-function plotH_data(dataset, fprefix, H)
+function plotH_data(dataset, fprefix, H; resolution = (800,400), space=0., labels=string.(collect(1:size(H,1))),
+        show_legend=true, colors=distinguishable_colors(size(H,1); lchoices=range(0, stop=50, length=5)),
+        ytickformat=values->["$value" for value in values])
     if dataset == :urban
         f = plotH_urban(H[2:7,:]; titles = ["2","3","4","5","6","7"])
+        save(fprefix*"_H.png",f)
     else
-        plotH_data_old(fprefix,H; arrange=:combine)
+        f = plotH_data(fprefix, H, resolution=resolution, space=space, labels=labels, show_legend=show_legend,
+                        ytickformat=ytickformat, colors=colors)
     end
-    save(joinpath(subworkpath,fprefix*"_H.png"),f)
 end
 
 function plotH_urban(H; title="", titles=fill("",size(H,1)))
@@ -618,15 +632,16 @@ end
 #========= Image show and save ===========================================#
 
 function mkimgW(W::Matrix{T},imgsz; gridcols=size(W,2), borderwidth=1, borderval=0.7, scalemtd=:maxwhole,
-        colors=(colorant"green1", colorant"white", colorant"magenta")) where T
+        mxabs = 0.1, colors=(colorant"green1", colorant"white", colorant"magenta")) where T
     ncells = size(W,2)
-    if scalemtd == :maxwhole
-        mxabs = max(eps(eltype(W)),maximum(abs, W))
+    # @show scalemtd
+    if scalemtd ∈ [:maxwhole, :fixed]
+        mxabs = scalemtd == :maxwhole ? max(eps(eltype(W)),maximum(abs, W)) : mxabs
         fsc = scalesigned(mxabs)
         fcol = colorsigned(colors...)
         Wcolor = Array(mappedarray(fcol ∘ fsc, reshape(W, Val(2))))
     elseif scalemtd == :maxcol
-        fsc = (x) -> (mxabs=max(eps(eltype(x)),maximum(abs, x)); x./mxabs)
+        fsc = (x) -> (mxabs=max(eps(eltype(x)),maximum(abs, x))*1.7; x./mxabs)
         sW = similar(W)
         for (i,x) in enumerate(eachcol(W)) sW[:,i] = fsc(x) end
         fcol = colorsigned(colors...)
@@ -641,9 +656,17 @@ function mkimgW(W::Matrix{T},imgsz; gridcols=size(W,2), borderwidth=1, borderval
         fcol = colorsigned(colors...)
         Wcolor = Array(mappedarray(fcol, reshape(sW, Val(2))))
     elseif scalemtd == :avgwhole
-        avgabs = sum(abs,W)/length(W)*18; sW = W./avgabs; clamp!(sW,-1,1)
+        avgabs = sum(abs,W)/length(W)*30; sW = W./avgabs; clamp!(sW,-1,1)
         fcol = colorsigned(colors...)
         Wcolor = Array(mappedarray(fcol, reshape(sW, Val(2))))
+    elseif scalemtd == :avgcol
+        fsc = (x) -> (avgabs=sum(abs, x)/length(x)*12; avgabs==0. ? x : x./avgabs)
+        sW = similar(W)
+        for (i,x) in enumerate(eachcol(W)) sW[:,i] = fsc(x) end
+        fcol = colorsigned(colors...)
+        Wcolor = Array(mappedarray(fcol, reshape(sW, Val(2))))
+    else
+        error("undefined scale method : $(scalemtd)")
     end
     gridsz = ((ncells-1)÷gridcols+1,gridcols)
     add_dim_sz = ntuple(i->1,Val(length(imgsz)-length(gridsz)))
@@ -843,7 +866,61 @@ function fitcomponents(GTW::AbstractArray{T}, GTH::AbstractArray{T}, W::Abstract
     matchlist, fitvals, rerrs
 end
 
+
 function fitcomponents(X::AbstractArray, GTX::AbstractVector, W::AbstractArray{T}, H::AbstractArray{T};
+            clamp=false) where T
+    pq = PriorityQueue{Tuple{Int,Int,Bool}, T}(Base.Order.Reverse) # Reverse(high->low)
+    gtcolnum = length(GTX); wcolnum = size(W,2); allidxs = collect(1:size(W,1))
+    for i = 1:gtcolnum
+        # Read bounding box from GTX[i][2] and mask from GTX[i][3]
+        # Then, perform masking with mask in the bounding box
+        # Ground truth X values of all the outside of the mask are assumed to be zero.
+        vecs = vcat(collect.(GTX[i][2])...); idxs = vecs[Bool.(GTX[i][3])] # TODO: make eltype(GTX[i][3]) as BOol
+        gtxi = X[idxs,:]; ngtxi = norm(gtxi)
+        # calcuate fit value  with each W[:,j]*H[j,:]'
+        for j = 1:wcolnum
+            wj = W[idxs,j]; hj = H[j,:]; xj = wj*hj' # when mask value is 1
+            # Calculate the norm of wjn*hj' which is the X of mask vlaue is 0
+            # wjn = W[allidxs[allidxs.∉ [idxs]],j] # when mask value is 0
+            # s=0; for w = wjn, h = hj s += (w*h)^2 end; nxjn = sqrt(s)
+            nxj2 = norm(xj)^2; nxjall2 = norm(W[:,j]*H[j,:]')^2; nxjn2 = nxjall2-nxj2
+            clamp && (xj[xj.<0].=0)
+            fitval = LCSVD.fitd(gtxi,xj,sqrt(nxjn2),sqrt(nxjall2),ngtxi) # fitval = LCSVD.fitd(gtxi,xj,nxjn,ngtxi)
+            # norm2diff = norm(gtxi-xj)^2; norm2outside = nxjn^2
+            # norm2nom = norm2diff+norm2outside
+            # norm2gt = ngtxi^2; norm2xj = norm(xj)^2; norm2xjall = norm2xj+norm2outside
+            # twonorm2gtxjall = 2*ngtxi*sqrt(norm2xjall); norm2denom = norm2gt+norm2xjall+twonorm2gtxjall
+            # @show norm2diff, norm2outside, norm2nom
+            # @show norm2gt, norm2xj, norm2xjall, twonorm2gtxjall, norm2denom
+            # @show fitval, norm2nom/norm2denom, 1-norm2nom/norm2denom
+            enqueue!(pq,(i,j,false),fitval)
+        end
+    end
+    # find best matched pair (i,j)
+    matchlist = Tuple{Int,Int,Bool}[]; ml = Int[]
+    fitvals = T[]
+    while !isempty(pq)
+        p = peek(pq)
+        dequeue!(pq)
+        found = false
+        mllength = length(matchlist)
+        for i = 1:mllength
+            if p[1][1] == matchlist[i][1] || p[1][2] == matchlist[i][2]
+                found = true
+                break
+            end
+        end
+        if !found
+            push!(matchlist,(p[1][1],p[1][2],p[1][3]))
+            push!(ml,p[1][2])
+            push!(fitvals,p[2])
+        end
+    end
+    rerrs = T[]
+    matchlist, fitvals, rerrs
+end
+
+function fitcomponents_old(X::AbstractArray, GTX::AbstractVector, W::AbstractArray{T}, H::AbstractArray{T};
             clamp=false) where T
     pq = PriorityQueue{Tuple{Int,Int,Bool}, T}(Base.Order.Reverse) # Reverse(high->low)
     gtcolnum = length(GTX); wcolnum = size(W,2)
@@ -887,7 +964,9 @@ fitx(a,b) = (m=sum(a)/length(a); denom=sum(abs2,a.-m); fitx(a,b,denom))
 fitx(a,b,denom) = (1-sum(abs2,a-b)/denom)
 fitd(a,b) = (na=norm(a); nb=norm(b); fitd(a,b,na,nb))
 fitd(a,b,na) = (nb=norm(b); fitd(a,b,na,nb))
+# fitd(a,b,nbn,na) = (nb=sqrt(norm(b)^2+nbn^2); fitd(a,b,nbn,na,nb))
 fitd(a,b,na,nb) = (denom=na^2+nb^2+2na*nb; 1-sum(abs2,a-b)/denom)
+fitd(a,b,nbn,na,nb) = (denom=na^2+nb^2+2na*nb; 1-(sum(abs2,a-b)+nbn^2)/denom)
 calfit(a,b) = (dval=fitd(a,b); aval=fitd(a,-b); dval > aval ? (dval, false) : (aval, true))
 calfit(a,b,na) = (dval=fitd(a,b,na); aval=fitd(a,-b,na); dval > aval ? (dval, false) : (aval, true))
 ssd(a,b) = sum(abs2,a-b)

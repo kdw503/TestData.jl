@@ -14,3 +14,21 @@ function noisefilter(filter,X)
     end
     X
 end
+
+function flip2makepos!(W,H)
+    p = size(W,2)
+    for i in 1:p
+        (w,h) = view(W,:,i), view(H,i,:)
+        psum = sum(w[w.>0]); nsum = -sum(w[w.<0])
+        psum < nsum && (w .*= -1; h .*= -1) # just '*=' doesn't work
+    end
+end
+
+function flip2makepos!(W,H,Mw,Mh)
+    p = size(W,2)
+    for i in 1:p
+        (w,h) = view(W,:,i), view(H,i,:); (mw,mh) = view(Mw,:,i), view(Mh,i,:)
+        psum = sum(w[w.>0]); nsum = -sum(w[w.<0])
+        psum < nsum && (w .*= -1; mw .*=-1; h .*= -1; mh .*= -1) # just '*=' doesn't work
+    end
+end

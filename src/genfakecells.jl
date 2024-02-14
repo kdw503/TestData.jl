@@ -38,22 +38,67 @@ function gaussian2D(sigma, imgsz::NTuple{2}, lengthT, revent=10; fovsz::NTuple{2
     else
         T₂ = makeintensity(lengthT, ncells, nevents) # nevents=10*ncells
     end
-    for inhibitidx in inhibitindices
-        if inhibitidx > 0 && inhibitidx <= ncells
-            T₂[:,inhibitidx] .*= 0.5
-            biasinhibit = maximum(T₂[:,inhibitidx])
-            T₂[:,inhibitidx] .*= -1
-            T₂[:,inhibitidx] .+= biasinhibit
-        end
-    end
-
     dx = rand(-jitter:jitter,2,lengthT)   # simulate some registration jitter
     dx = map(x->round(Int, x), dx .+ range(0, stop=drift, length=lengthT)')
+    if !isempty(inhibitindices)
+        for inhibitidx in inhibitindices
+            if inhibitidx > 0 && inhibitidx <= ncells
+                T₂[:,inhibitidx] .*= 0.5
+                T₂[:,inhibitidx] .*= -1 # inverted
+            end
+        end
+        img_wobias = makeimages(imgsz..., S₂, centers, T₂, dx)
+        signalpwr = sum(img_wobias.^2)
+        for inhibitidx in inhibitindices
+            if inhibitidx > 0 && inhibitidx <= ncells
+                biasinhibit = -minimum(T₂[:,inhibitidx])
+                T₂[:,inhibitidx] .+= biasinhibit # add individual bias to inverted T₂
+            end
+        end
+    end
     img₂ = makeimages(imgsz..., S₂, centers, T₂, dx)
-    signalpwr = sum(img₂.^2)
+    signalpwr = isempty(inhibitindices) ? sum(img₂.^2) : signalpwr
     bg = maximum(img₂)*bias
     noise = randn(size(img₂)); noisepwr0 = sum(noise.^2)
     noiseamp = sqrt(signalpwr/10^(SNR/10)/noisepwr0); noise .*= noiseamp
+    img₂ = img₂ .+ bg + noise # add noise and bg
+    img₂a = AxisArray(img₂, :x, :y, :time)
+    gtW, gtH, gtWimgc = makegt(S₂,centers,T₂,imgsz,ncells,bg; gtincludebg=gtincludebg)
+    gtbg = copy(bg)
+    imgrs = Matrix(reshape(img₂a, prod(imgsz), nimages(img₂a)))
+    ncells, imgrs, img₂, gtW, gtH, gtWimgc, gtbg
+end
+
+function gaussian2D_AmplitudeSNR(sigma, imgsz::NTuple{2}, lengthT, revent=10; fovsz::NTuple{2}=imgsz, jitter=0,
+        drift = 0, bias=0.1, SNR = 10, useCalciumT=false, orthogonal=true, overlaplevel=1,
+        inhibitindices=0, gtincludebg=false) # should lengthT > 50
+    S₂ = gaussiantemplate(Float64, sigma)
+    centers = spreadcells(fovsz, sigma)
+    imagecenter = fovsz.÷2
+    overlap_cell_center = [imagecenter[1]-min(overlaplevel,imagecenter[1])÷1.5,imagecenter[2]+min(overlaplevel,imagecenter[2])] # to add an overlapped cell
+    !orthogonal && (centers = [centers overlap_cell_center])
+    ncells = size(centers, 2)
+    nevents = revent*ncells*lengthT/100
+    if useCalciumT
+        fr = makefiringrate(lengthT, ncells, lambda=0.01) # rate parameter λ in the Poisson distribution
+        # (firingrate::Array{T1,2}, arcoeff::Vector{T2}, noisesigma, alpha, baseline
+        T₂ = calcium_transient(fr, [0.85], 0., 1, 0.) # add noise and baseline later
+    else
+        T₂ = makeintensity(lengthT, ncells, nevents) # nevents=10*ncells
+    end
+    dx = rand(-jitter:jitter,2,lengthT)   # simulate some registration jitter
+    dx = map(x->round(Int, x), dx .+ range(0, stop=drift, length=lengthT)')
+    if !isempty(inhibitindices)
+        for inhibitidx in inhibitindices
+            if inhibitidx > 0 && inhibitidx <= ncells
+                T₂[:,inhibitidx] .*= 0.5
+                T₂[:,inhibitidx] .*= -1
+            end
+        end
+    end
+    img₂ = makeimages(imgsz..., S₂, centers, T₂, dx)
+    bg = maximum(img₂)*bias
+    noise = 10^(-SNR/20)*randn(size(img₂))
     img₂ = img₂ .+ bg + noise # add noise and bg
     img₂a = AxisArray(img₂, :x, :y, :time)
     gtW, gtH, gtWimgc = makegt(S₂,centers,T₂,imgsz,ncells,bg; gtincludebg=gtincludebg)
@@ -123,13 +168,14 @@ function makegt(S₂::AbstractArray{Ts},centers,H,imgsz,ncells,bg; gtincludebg=t
     gtimg = Array{Ts}(undef,imgsz...,numgtcomp) # ncells + bg
     gtH = Array{Ts}(undef,size(H,1),numgtcomp)
     for i = 1:ncells
-        T = zeros(1,ncells)
+        T = zeros(1,ncells) # total ncells timepoints
         T[i] = 1.0
-        img0 = makeimages(imgsz..., S₂, centers, T)
+        img0 = makeimages(imgsz..., S₂, centers, T) # ith cell is activated at timepoint 1.
+                                                    # This means length 1 movie X is the ith cell shape
         nrm = sqrt(sum(img0.^2))
-        img0 ./= nrm
-        gtH[:,i] = H[:,i] .* nrm 
-        gtimg[:,:,i] = dropdims(img0,dims=3)
+        img0 ./= nrm # normalized
+        gtH[:,i] = H[:,i] .* nrm                    # power is all stored to H component
+        gtimg[:,:,i] = dropdims(img0,dims=3)        # each gtimg[:,:,i] holds the ith cell shape
     end
     gtincludebg && begin
         fillval = bg == 0 ? zero(Ts) : 1/sqrt(*(imgsz...))
