@@ -195,6 +195,20 @@ function load_inhibit_real()
     X, imgsz, lengthT, ncells, gtncells, Dict("activated_loc"=>(38,21),"inhibited_loc"=>(82,90))
 end
 
+function load_rnaseq(feature_name)
+    dirpath = joinpath(datapath,"AllenBrain")
+    list = Dict{String,String}(
+        "WMB-10Xv2-TH"=>"/expression_matrices/WMB-10Xv2/20230630/WMB-10Xv2-TH-log2.h5ad",
+        "WMB-10Xv3-HPF" => "/expression_matrices/WMB-10Xv3/20230630/WMB-10Xv3-HPF-log2.h5ad",
+        "WMB-10Xv3-HY" => "/expression_matrices/WMB-10Xv3/20230630/WMB-10Xv3-HY-log2.h5ad",
+        "WMB-10Xv3-CTXsp"=>"/expression_matrices/WMB-10Xv3/20230630/WMB-10Xv3-CTXsp-log2.h5ad",
+    )
+    rpath = list[feature_name]
+    anndata = load(joinpath(dirpath,joinpath(split(rpath,"/"))))
+    X = anndata.X
+    X, (0,0), size(X,2), 0, 0, Dict()
+end
+
 function register(imgs,fixed_index,mxshift, mxrot, margin; method=:rigid, presmoothed=false, SD=I, initial_tfm=RegisterQD.IdentityTransformation(), kwargs...)
     slicedim = ndims(imgs); sz = size(imgs)
     fixed = imgs[:,:,fixed_index]
@@ -299,7 +313,7 @@ function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fov
     return X, imgsz, fakecells_dic, img_nl, maxSNR_X
 end
 
-function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), sigma=5.0, fovsz=imgsz, lengthT=1000,
+function load_data(dataset; feature_name="", SNR=10, user_ncells=0, imgsz=(40,20), sigma=5.0, fovsz=imgsz, lengthT=1000,
         useCalciumT=false, jitter=0, bias=0.1, inhibitindices=0, gtincludebg=false, issave=true,
         isload=true, dpath=datapath, save_maxSNR_X=false, save_X=false, save_gtimg=false, verbose=false)
     if dataset == :cbclface
@@ -328,6 +342,8 @@ function load_data(dataset; SNR=10, user_ncells=0, imgsz=(40,20), sigma=5.0, fov
         load_neurofinder_small()
     elseif dataset == :inhibit_real
         load_inhibit_real()
+    elseif dataset == :rnaseq
+        load_rnaseq(feature_name)
     elseif dataset == :fakecells
         verbose && println((isload ? "Loading" : "Generating") * " image of fakecells")
         load_fakecells(only2cells=false, dpath=dpath, sigma=sigma, SNR=SNR, user_ncells=user_ncells, imgsz=imgsz,

@@ -103,7 +103,7 @@ function gaussian2D_AmplitudeSNR(sigma, imgsz::NTuple{2}, lengthT, revent=10; fo
     img₂a = AxisArray(img₂, :x, :y, :time)
     gtW, gtH, gtWimgc = makegt(S₂,centers,T₂,imgsz,ncells,bg; gtincludebg=gtincludebg)
     gtbg = copy(bg)
-    imgrs = Matrix(reshape(img₂a, prod(imgsz), nimages(img₂a)))
+    imgrs = Matrix(reshape(img₂a, prod(imgsz), size(img₂a,ndims(img₂a))))
     ncells, imgrs, img₂, gtW, gtH, gtWimgc, gtbg
 end
 
@@ -124,7 +124,7 @@ function gaussian_two_objs(sigma, imgsz::NTuple{2}, lengthT, distance, overlap_r
     img₂a = AxisArray(img₂, :x, :y, :time)
     gtW, gtH, gtWimgc = makegt(S₂,centers,T₂,imgsz,2,bg,gtincludebg=gtincludebg)
     gtbg = copy(bg)
-    imgrs = Matrix(reshape(img₂a, prod(imgsz), nimages(img₂a)))
+    imgrs = Matrix(reshape(img₂a, prod(imgsz), size(img₂a,ndims(img₂a))))
     2, imgrs, img₂, gtW, gtH, gtWimgc, gtbg
 end
 
