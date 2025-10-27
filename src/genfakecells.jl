@@ -163,10 +163,10 @@ end
 #     ncells, imgrs, img₂, gtW, gtH, gtWimgc, gtbg
 # end
 
-function makegt(S₂::AbstractArray{Ts},centers,H,imgsz,ncells,bg; gtincludebg=true) where Ts
+function makegt(S₂::AbstractArray{Ts},centers,Ht,imgsz,ncells,bg; gtincludebg=true) where Ts
     numgtcomp = gtincludebg ? ncells+1 : ncells
     gtimg = Array{Ts}(undef,imgsz...,numgtcomp) # ncells + bg
-    gtH = Array{Ts}(undef,size(H,1),numgtcomp)
+    gtH = Array{Ts}(undef,numgtcomp,size(Ht,1))
     for i = 1:ncells
         T = zeros(1,ncells) # total ncells timepoints
         T[i] = 1.0
@@ -174,13 +174,13 @@ function makegt(S₂::AbstractArray{Ts},centers,H,imgsz,ncells,bg; gtincludebg=t
                                                     # This means length 1 movie X is the ith cell shape
         nrm = sqrt(sum(img0.^2))
         img0 ./= nrm # normalized
-        gtH[:,i] = H[:,i] .* nrm                    # power is all stored to H component
+        gtH[i,:] = Ht[:,i] .* nrm                    # power is all stored to H component
         gtimg[:,:,i] = dropdims(img0,dims=3)        # each gtimg[:,:,i] holds the ith cell shape
     end
     gtincludebg && begin
         fillval = bg == 0 ? zero(Ts) : 1/sqrt(*(imgsz...))
         fill!(view(gtimg,:,:,numgtcomp), fillval)
-        fill!(view(gtH,:,numgtcomp), sqrt(*(imgsz...))*bg)
+        fill!(view(gtH,numgtcomp,:), sqrt(*(imgsz...))*bg)
     end
     gtimgrs = reshape(gtimg  , prod(imgsz), size(gtimg)[end])
     mxabs = maximum(abs, gtimg)
