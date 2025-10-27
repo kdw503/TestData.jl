@@ -387,7 +387,7 @@ function imsave_data(dataset,fprefix,W,H,imgsz,lengthT; mssdwstr="", mssdhstr=""
         imsave_orl(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :natural
         verbose && println("Saving image of natural image")
-        imsave_natural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
+        imsave_natural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors, saveH=false)
     elseif dataset == :onoffnatural
         verbose && println("Saving image of On/OFF-contrast filtered natural image")
         imsave_onoffnatural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
