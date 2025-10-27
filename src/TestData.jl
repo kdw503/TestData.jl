@@ -387,7 +387,7 @@ function imsave_data(dataset,fprefix,W,H,imgsz,lengthT; mssdwstr="", mssdhstr=""
         imsave_orl(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
     elseif dataset == :natural
         verbose && println("Saving image of natural image")
-        imsave_natural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors, saveH=false)
+        imsave_natural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors, saveH=saveH)
     elseif dataset == :onoffnatural
         verbose && println("Saving image of On/OFF-contrast filtered natural image")
         imsave_onoffnatural(fprefix,W,H,imgsz,lengthT; signedcolors=signedcolors)
@@ -703,7 +703,7 @@ end
 
 #========= Image show and save ===========================================#
 
-function mkimgW(W::Matrix{T},imgsz; gridcols=size(W,2), borderwidth=1, borderval=0.7, scalemtd=:maxwhole,
+function mkimgW(W::AbstractMatrix{T},imgsz; gridcols=size(W,2), borderwidth=1, borderval=0.7, scalemtd=:maxwhole,
         mxabs = 0.1, colors=(colorant"green1", colorant"white", colorant"magenta")) where T
     ncells = size(W,2)
     # @show scalemtd
@@ -758,7 +758,7 @@ function mkimgW(W::Matrix{T},imgsz; gridcols=size(W,2), borderwidth=1, borderval
     Wrs
 end
 
-function mkimgH(H::Matrix{T}, tlength=size(H,2); colors=(colorant"green1", colorant"white", colorant"magenta")) where T
+function mkimgH(H::AbstractMatrix{T}, tlength=size(H,2); colors=(colorant"green1", colorant"white", colorant"magenta")) where T
     mxabs = maximum(abs, H)
     fsc = scalesigned(mxabs)
     fcol = colorsigned(colors...)
