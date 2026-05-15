@@ -258,7 +258,7 @@ function load_fakecells(;dpath=datapath, SNR=10, user_ncells=0, sigma=5.0, imgsz
         gtW = fakecells_dic["gtW"]; gtH = fakecells_dic["gtH"]
         W3,H3 = copy(gtW), copy(gtH')
         imsaveW(dfprefix*"_GT_W.png", W3, imgsz, borderwidth=1)
-        imsaveH(dfprefix*"_GT_H.png", H3, 100, colors=g1wm())
+        imsaveH(dfprefix*"_GT_H.png", H3', 100, colors=g1wm())
     end
     if save_maxSNR_X
         imsaveW(dfprefix*"_maxSNR_W.png", maxSNR_X, imgsz, borderwidth=1,colors=bbw())
@@ -369,7 +369,7 @@ function load_data(dataset; feature_name="", dataset_name="", SNR=10, user_ncell
             lengthT=lengthT, orthogonal=true, bias=bias, gtincludebg=gtincludebg, issave=issave, isload=isload,
             useCalciumT=useCalciumT,jitter=jitter, save_maxSNR_X=save_maxSNR_X, save_gtimg=save_gtimg)
     else
-        error("Not supported dataset")
+        error("Not supported dataset : $dataset")
     end
 end
 
@@ -413,6 +413,8 @@ function imsave_data(dataset,fprefix,W,H,imgsz,lengthT; mssdwstr="", mssdhstr=""
         verbose && println("Saving image of fakecells with only two cells")
         imsave_fakecell(fprefix,W,H,imgsz,lengthT; mssdwstr=mssdwstr, mssdhstr=mssdhstr,
             scalemtd=scalemtd, signedcolors=signedcolors, saveH=saveH)
+    else
+        error("Not supported dataset : $dataset")
     end
     nothing
 end
