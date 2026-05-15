@@ -17,15 +17,16 @@ if Sys.iswindows()
 elseif Sys.isunix()
     datapath=ENV["MYSTORAGE"]*"/work/Data"
 end
+_display_available = Sys.isunix() && (haskey(ENV, "DISPLAY") || haskey(ENV, "WAYLAND_DISPLAY"))
 try
-    Sys.isunix() && run(`ls /usr/bin/x11vnc`) # check if this is noVNC graphical platform
+    _display_available || error("No display environment variable found")
+    Base.require(Main, :GLMakie)   # only load if installed and display is present
+    Base.require(Main, :ImageView)
     using ImageView, GLMakie
-#    using Gtk4#.ShortNames
     GLMakie.activate!()
     global AMakie = GLMakie
-catch e# not a graphical platform
-    @show e
-    @warn("Not a RIS noVNC graphical platform")
+catch e
+    @warn("Display or GLMakie/ImageView not available — using CairoMakie")
     using CairoMakie
     global is_X11_available = false
     global is_ImageView_available = false
