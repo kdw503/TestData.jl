@@ -1,7 +1,7 @@
 name = "TestData"
 uuid = "72c4b22c-bbb9-4377-8daa-6a9d06489e17"
-version = "0.1.0"
 authors = ["Dae Woo Kim <kim503@wustl.edu>"]
+version = "0.1.0"
 
 [deps]
 AxisArrays = "39de3d68-74b9-583c-8d2d-e117c070f3a9"
@@ -13,10 +13,14 @@ ImageAxes = "2803e5a7-5153-5ecf-9a86-9b4c37f5f5ac"
 ImageCore = "a09fc81d-aa75-5fe9-8630-4744c3626534"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MAT = "23992714-dd62-5051-b70f-ba57cb901cac"
 MappedArrays = "dbb5928d-eab1-5f90-85c2-b9b0edb7c900"
+NAOMiSim = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 VideoIO = "d6d074c3-1acf-5d4c-9a43-ef38773959a2"
 
 [weakdeps]
@@ -37,10 +41,13 @@ ImageCore = "0.10"
 ImageView = "0.13"
 Images = "0.26"
 JLD2 = "0.6"
+LinearAlgebra = "1"
 MAT = "0.10"
 MappedArrays = "0.4"
 Printf = "1"
+Random = "1"
 Statistics = "1"
+UnPack = "1"
 VideoIO = "1"
 julia = "1.10"
 

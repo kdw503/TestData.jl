@@ -1,14 +1,15 @@
 __precompile__(false)
 module TestData
 
-using MAT, Colors, JLD2, Printf, Images, Statistics, VideoIO
-using FakeCells, AxisArrays, ImageCore, MappedArrays, DataStructures
+using MAT, Colors, JLD2, Printf, Images, Statistics, VideoIO, LinearAlgebra, Random, UnPack
+using FakeCells, NAOMiSim, AxisArrays, ImageCore, MappedArrays, DataStructures
 using ImageAxes # avoid using ImageCore.nimages for AxisArray type array
 include("genfakecells.jl")
+include("gennaomi.jl")
 include("utils.jl")
 
 export load_data, imsave_data, imsave_data_gt, plot_convergence, plotWH_data, plotH_data
-export imsave_reconstruct, imsaveW, imshowW
+export imsave_reconstruct, imsaveW, imshowW, plot_H_gt_n
 
 is_X11_available = true
 is_ImageView_available = true
@@ -243,14 +244,14 @@ function register(imgs,fixed_index,mxshift, mxrot, margin; method=:rigid, presmo
     rimgs
 end
 
-function load_fakecells(;dpath=datapath, SNR=10, user_ncells=0, sigma=5.0, imgsz=(40,20), fovsz=imgsz, lengthT=1000,
+function load_fakecells(;dpath=datapath, SNR=10, mfncells=nothing, sigma=5.0, imgsz=(40,20), fovsz=imgsz, lengthT=1000,
         orthogonal=false, bias=0.1, useCalciumT=false, jitter=0, inhibitindices=0, gtincludebg=false, only2cells=false,
         issave=true, isload=true, save_maxSNR_X=false, save_X=false, save_gtimg=false)
     dirpath = joinpath(dpath,"fakecells")
     calciumstr = useCalciumT ? "_calcium" : ""
     fprefix = "fakecells$(inhibitindices)$(calciumstr)_sz$(imgsz)_lengthT$(lengthT)_J$(jitter)_SNR$(SNR)_bias$(bias)"
     dfprefix = joinpath(dirpath,fprefix)
-    X, imgsz, fakecells_dic, img_nl, maxSNR_X = loadfakecell(Float64, dfprefix*".jld2"; sigma=sigma,
+    X, imgsz, fakecells_dic, img_vt, maxSNR_X = loadfakecell(Float64, dfprefix*".jld2"; sigma=sigma,
         only2cells=only2cells, fovsz=fovsz, imgsz=imgsz, lengthT=lengthT, orthogonal=orthogonal, bias=bias,
         useCalciumT=useCalciumT, jitter=jitter, SNR=SNR, inhibitindices=inhibitindices, gtincludebg=gtincludebg,
         issave=issave, isload=isload);
@@ -270,7 +271,7 @@ function load_fakecells(;dpath=datapath, SNR=10, user_ncells=0, sigma=5.0, imgsz
         Xuint8 = UInt8.(round.(map(clamp01nan, X_clamped)*255))
         VideoIO.save(dfprefix*".mp4", reshape.(eachcol(Xuint8),imgsz...), framerate=30, encoder_options=options)
     end
-    ncells = user_ncells==0 ? gtncells + 8 : user_ncells
+    ncells = mfncells===nothing ? gtncells + 8 : mfncells
     X, imgsz, lengthT, ncells, gtncells, fakecells_dic
 end
 
@@ -282,7 +283,7 @@ function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fov
 #        JLD.load(fname)
         gt_ncells = fakecells_dic["gt_ncells"]
         imgrs = fakecells_dic["imgrs"]
-        img_nl = fakecells_dic["img_nl"]
+        img_vt = fakecells_dic["img_vt"] # video tensor (imgsz..., lengthT)
         gtW = fakecells_dic["gtW"]
         gtH = fakecells_dic["gtH"]
         gtWimgc = fakecells_dic["gtWimgc"]
@@ -294,18 +295,18 @@ function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fov
         # @show fname
         isload && @warn "$fname not found. Generating fakecell data..."
         if only2cells
-            gt_ncells, imgrs, img_nl, gtW, gtH, gtWimgc, gtbg = gaussian_two_objs(sigma, imgsz, lengthT,
+            gt_ncells, imgrs, img_vt, gtW, gtH, gtWimgc, gtbg = gaussian_two_objs(sigma, imgsz, lengthT,
                                     distance, overlap_rate; jitter=jitter, fovsz=fovsz, SNR = SNR)
         else
             revent = 10
-            gt_ncells, imgrs, img_nl, gtW, gtH, gtWimgc, gtbg = gaussian2D(sigma, imgsz, lengthT, revent,
+            gt_ncells, imgrs, img_vt, gtW, gtH, gtWimgc, gtbg = gaussian2D(sigma, imgsz, lengthT, revent,
                 bias=bias, useCalciumT=useCalciumT,jitter=jitter, fovsz=fovsz, SNR=SNR, orthogonal=orthogonal,
                 inhibitindices=inhibitindices,gtincludebg=gtincludebg)
         end
         fakecells_dic = Dict()
         fakecells_dic["gt_ncells"] = gt_ncells
         fakecells_dic["imgrs"] = imgrs
-        fakecells_dic["img_nl"] = img_nl
+        fakecells_dic["img_vt"] = img_vt # video tensor (imgsz..., lengthT)
         fakecells_dic["gtW"] = gtW
         fakecells_dic["gtH"] = gtH
         fakecells_dic["gtWimgc"] = Array(gtWimgc)
@@ -321,13 +322,214 @@ function loadfakecell(T::Type, fname; sigma=5.0, lengthT=100, imgsz=(40,20), fov
     maxindices = argmax.(eachcol(gtH))
     maxSNR_X = X[:,[maxindices...]]
 
-    return X, imgsz, fakecells_dic, img_nl, maxSNR_X
+    return X, imgsz, fakecells_dic, img_vt, maxSNR_X
 end
 
-function load_data(dataset; feature_name="", dataset_name="", SNR=10, user_ncells=0, imgsz=(40,20),
-        sigma=5.0, fovsz=imgsz, lengthT=1000, orthogonal=false, useCalciumT=false, jitter=0,
-        bias=0.1, inhibitindices=0, gtincludebg=false, issave=true, isload=true, dpath=datapath,
-        save_maxSNR_X=false, save_X=false, save_gtimg=false, verbose=false)
+function load_naomi(;dpath=datapath,
+        mfncells=nothing,   # recommaned number of components for factorization; if nothing, set to gtncells + 5
+        inh_frac=0.0,            # fraction of neurons made inhibitory (NAOMi soma activity dips below baseline)
+        inh_baseline_boost=2.0,  # baseline multiplier for inhibitory neurons, so dips have headroom above 0
+        seed = nothing,     # RNG seed for reproducibility
+        avg_rad=8.0,        # soma radius (μm); drives min_dist and nuc_rad below
+        pavg=5.0,           # average laser power (mW)
+        vres=1.0,           # volume resolution (px/μm); image size = vol_sz[1:2] .* vres
+        psf_NA=0.6,         # objective numerical aperture; lower NA → thicker (less sharply focused) depth of field
+        imgsz=(25,25),
+        lengthT=5000,
+        gtncells=10,
+        isload=true,
+        issave=false,
+        verbose=false
+        )
+    dirpath = joinpath(dpath,"naomi")
+
+    _sfrac = 2  # spatial downsampling factor; output image = vol_sz*vres / sfrac
+    _vol_xy_sz = imgsz .* _sfrac ./ vres  # FOV [x, y] in μm; at vres=1 px/μm → 25×25px image
+    params = Dict(
+        :seed        => seed,           # RNG seed for reproducibility
+        :N_neur      => gtncells,       # number of neurons simulated (~7 visible near focal plane)
+        :vol_sz      => [_vol_xy_sz..., 50.0],  # FOV [x, y, z] in μm; at vres=1 px/μm → 50×50px image; z≥50μm required by PSF
+        :vol_depth   => 150.0,          # focal plane depth below the surface (μm)
+        :avg_rad     => avg_rad,        # mean soma radius (μm); at vres=1 px/μm → ~$(round(Int, 2*_avg_rad))px diameter
+        :min_dist    => 2.5 * avg_rad,    # minimum inter-neuron distance (μm); around soma diameter
+        :nuc_rad     => round.([avg_rad * 3.5/6, avg_rad * 2.0/6]; digits=1),  # nucleus [equatorial, polar] radius (μm)
+        :vres        => vres,           # volume resolution (px/μm); image size = vol_sz[1:2] .* vres
+        :nt          => lengthT,         # number of time frames
+        :dt          => 1/30,            # frame interval (s); 30 Hz acquisition
+        :prot        => "GCaMP6f",       # fluorophore protocol (determines photon yield and kinetics)
+        :vasc_flag   => false,           # include vasculature absorption artifacts
+        :psf_type    => "gaussian",      # PSF model: "gaussian" (fast) or "vector" (physically accurate)
+        :psf_NA      => psf_NA,          # objective numerical aperture; lower NA → thicker depth of field (axial PSF extent)
+        :sigma0      => 2.7,             # readout noise std (ADU); independent of photon count
+        :pavg        => pavg,            # average laser power (mW); 1mW→~2dB SNR, 5mW→~16dB SNR
+        :scan_buff   => 0,               # extra scan margin around FOV (pixels)
+        :sfrac       => _sfrac,          # spatial downsampling factor; output image = vol_sz*vres / sfrac
+        :n_spikes    => 12,              # number of spikes per neuron over the recording
+        :tau_rise    => 3,               # calcium transient rise time (frames)
+        :tau_decay   => 60,              # calcium transient decay time (frames; ~2s at 30Hz)
+        :kernel_mult => 6,                # kernel support length = kernel_mult * tau_decay frames
+        :spike_amp   => 4.0,             # spike amplitude (ΔF/F)
+        :scale       => 4,               # display upscale factor for saved figures (px per data pixel)
+        :inh_frac    => inh_frac,             # fraction of neurons made inhibitory
+        :inh_baseline_boost => inh_baseline_boost,  # baseline multiplier for inhibitory neurons
+    )
+    imgszstr = join(imgsz, "x")
+
+    @unpack avg_rad, nuc_rad, nt, dt, sigma0, pavg, scan_buff, scale = params
+
+    #== Prescan: generate and save ground-truth W, H, and related data for evaluation and figure panels ==#
+    prescan_params = Dict(k => params[k] for k in [
+        :seed, :min_dist, :nuc_rad, :vasc_flag, :vol_depth, :sfrac, :psf_type, :n_spikes, :tau_rise,
+        :tau_decay, :kernel_mult, :spike_amp, :nt, :dt, :prot, :inh_frac, :inh_baseline_boost,
+    ])
+ 
+    tpm_params   = check_tpm_params(TPMParams(; pavg))
+    noise_params = NoiseParams(; darkcount=0.0, sigma=0.0, sigma0, mu0=0.0, bleedp=0.0)
+    N1, N2 = imgsz; Nt = lengthT   # TODO : How about 3D?
+ 
+    ps_paramstr = "N$(gtncells)_$(imgszstr)x$(lengthT)_r$(avg_rad)_vr$(vres)_na$(psf_NA)"
+    gfprefix = "naomi_prescan_$(ps_paramstr)"
+    gfn = joinpath(dirpath,gfprefix)
+    if isload && isfile(gfn*".jld2") && (load(gfn*".jld2", "prescan_params") == prescan_params)
+        verbose && println("Found prescan data for Naomi small dataset. Loading $(gfn).jld2...")
+        @load gfn*".jld2" vol_out vol_params PSF_struct neur_act spike_opts inh_idx W_gt_n H_gt_n powers prescan_params
+    else
+        verbose && isload && !isfile(gfn*".jld2") && (@warn "File $(gfn).jld2 not found")
+        verbose && isload && isfile(gfn*".jld2") && !(load(gfn*".jld2", "prescan_params") == prescan_params) &&
+                (@warn "Prescan parameters are not matched")
+        verbose && println("No prescan data found for Naomi small dataset. Generating...")
+        vol_out, vol_params, PSF_struct, neur_act, spike_opts, inh_idx, W_gt_n, H_gt_n, powers =
+                naomi_prescan(params, noise_params, tpm_params, imgsz, verbose)
+
+        if issave
+            # ── Save jld ──────────────────────────────────────────────────────────────────
+            @save gfn*".jld2" vol_out vol_params PSF_struct neur_act spike_opts inh_idx W_gt_n H_gt_n powers prescan_params
+            verbose && @info "Saved pre-scan cache → $(gfprefix).jld2"
+
+            # ── Figures ───────────────────────────────────────────────────────────────────
+            K = size(vol_out.locs, 1)
+
+            # W_gt: neuron footprints tiled horizontally with 1-pixel white border
+            vmax_w  = maximum(max.(W_gt_n, 0.))
+            panels  = [add_border(repeat(reshape(W_gt_n[:,k], N1, N2), inner=(scale,scale)), 1, vmax_w)
+                    for k in 1:K]
+            W_canvas = hcat(panels...)
+            save_gray_png(gfn*"_W_gt.png", W_canvas, 0., vmax_w; scale)
+            verbose && @info "Saved → $(gfprefix)_W_gt.png"
+
+            # H_gt_n: power-scaled activity traces, one per neuron
+            plot_H_gt_n(gfn, H_gt_n, dt; figsize=(900,600), verbose=verbose)
+        end
+    end
+
+    #== Main scan: generate and save noisy data, and related data for evaluation ==#
+    dfprefix = "naomi_$(ps_paramstr)_pavg$(pavg)"
+    dfn = joinpath(dirpath,dfprefix)
+    if isload && isfile(dfn*".jld2") && (load(dfn*".jld2", "params") == params)
+        verbose && println("Found data for Naomi small dataset. Loading...")
+        @load dfn*".jld2" X_noisy X_clean maxSNR_X actual_snr mu_pmt params
+    else
+        verbose && println("No data found for Naomi small dataset. Generating...")
+        X_noisy, X_clean,  maxSNR_X, actual_snr, mu_pmt = naomi_scan(vol_out, PSF_struct, neur_act,
+                                        spike_opts, H_gt_n, imgsz, params, noise_params, tpm_params)
+
+        if issave
+            # ── Save JLD2 ─────────────────────────────────────────────────────────────────
+            @save dfn*".jld2" X_noisy X_clean maxSNR_X actual_snr mu_pmt params
+            verbose && @info "Saved → $(dfprefix).jld2"
+
+            # ── Figures ───────────────────────────────────────────────────────────────────
+            # # peak frame (raw noisy)
+            # F_noisy3d = reshape(X_noisy, N1, N2, Nt)
+            # p_lo = quantile(vec(X_noisy), 0.005)
+            # p_hi = quantile(vec(X_noisy), 0.999)
+            # pk = argmax(vec(maximum(reshape(X_clean, N1, N2, Nt); dims=(1,2))))
+            # fig_frame = Figure(size=(N1*scale, N2*scale), figure_padding=0)
+            # ax_fr = Axis(fig_frame[1,1]); hidedecorations!(ax_fr); hidespines!(ax_fr)
+            # colsize!(fig_frame.layout,1,Fixed(N1*scale)); rowsize!(fig_frame.layout,1,Fixed(N2*scale))
+            # heatmap!(ax_fr, F_noisy3d[:,:,pk]; colormap=:grays, colorrange=(p_lo, p_hi))
+            # save(joinpath(figdir, "exp8_peak_frame_pavg$(pavg)_$(actual_snr_str).png"), fig_frame)
+            # @info "Saved → exp8_peak_frame_pavg$(pavg)_$(actual_snr_str).png"
+
+            # Correlation image
+            mean_tr = vec(mean(X_noisy; dims=1))
+            mean_c  = mean_tr .- mean(mean_tr); mean_c ./= norm(mean_c)
+            corr_vals = map(1:N1*N2) do i
+                x = @view X_noisy[i,:]; xc = x .- mean(x); n = norm(xc)
+                n < eps(eltype(xc)) ? 0.0 : dot(xc ./ n, mean_c)
+            end
+            corr_img = reshape(corr_vals, N1, N2)
+            c_lo, c_hi = extrema(corr_img)
+            save_gray_png("$(dfn)_corr.png", corr_img, c_lo, c_hi; scale)
+            verbose && @info "Saved → $(dfprefix)_corr.png"
+
+            # GIF: axes-free grayscale movie around peak activity
+            X_noisy_ph = X_noisy ./ mu_pmt          # photon-domain noisy movie
+            F_noisy3d  = reshape(X_noisy_ph, N1, N2, Nt)
+            mean_act   = vec(mean(max.(reshape(X_clean, N1, N2, Nt), 0.); dims=(1,2)))
+            pk_gif     = argmax(mean_act)
+            win_s      = max(1, pk_gif - 50)
+            win_e      = min(Nt, win_s + 700)
+            gif_fps    = 8
+            gif_dur_s  = 20
+            win_len    = win_e - win_s + 1
+            frames_gif = win_s:max(1, round(Int, win_len / (gif_dur_s * gif_fps))):win_e
+
+            gif_lo = quantile(vec(X_noisy_ph), 0.005)
+            gif_hi = quantile(vec(X_noisy_ph), 0.999)
+
+            save_gray_gif("$(dfn).gif", F_noisy3d, frames_gif, gif_lo, gif_hi; scale, fps=gif_fps)
+            verbose && @info "Saved → $(dfprefix).gif  ($(length(frames_gif)) frames @ $(gif_fps)fps ≈ $(round(length(frames_gif)/gif_fps; digits=1))s)"
+        end
+    end
+
+    #== Load data and organize into output format ==#
+    naomi_dic = Dict()
+    naomi_dic["gtW"] = W_gt_n
+    naomi_dic["gtH"] = H_gt_n
+    naomi_dic["gt_ncells"] = gtncells
+    naomi_dic["imgsz"] = imgsz
+    naomi_dic["SNR"] = actual_snr
+    naomi_dic["powers"] = powers
+    naomi_dic["dt"] = dt
+    naomi_dic["sigma"] = nothing
+
+    mfncells = mfncells===nothing ? gtncells + 5 : mfncells
+    X_noisy, imgsz, lengthT, mfncells, gtncells, naomi_dic
+end
+
+function plot_H_gt_n(gfn, H_gt_n, dt; figsize=(900,600), verbose=false)
+    (K, nt) = size(H_gt_n)
+    t_sec   = (0:nt-1) .* dt
+    offset  = maximum(H_gt_n) * 0.5
+    colors  = Makie.wong_colors()
+    fig_hgt = AMakie.Figure(size=figsize)
+    ax_hgt  = AMakie.Axis(fig_hgt[1,1];
+        xlabel="Time (s)", ylabel="Neuron",
+        title ="Ground-truth activity (H_gt × spatial power)")
+    ytick_pos = Float64[]; ytick_lbl = String[]
+    for k in 1:K
+        y_off = (K - k) * offset
+        lines!(ax_hgt, t_sec, H_gt_n[k,:] .+ y_off;
+            color=colors[mod1(k, length(colors))], linewidth=0.8)
+        push!(ytick_pos, y_off)
+        push!(ytick_lbl, "N$k")
+    end
+    ax_hgt.yticks = (ytick_pos, ytick_lbl)
+    save(gfn*"_H_gt.png", fig_hgt)
+    verbose && @info "Saved → $(gfprefix)_H_gt.png"
+    nothing
+end
+
+function load_data(dataset; feature_name="", dataset_name="", dpath=datapath, mfncells=nothing,
+        imgsz=(40,20), lengthT=1000,                                # fakecells and naomi common parameters
+        sigma=5.0, fovsz=imgsz, orthogonal=false, SNR=10, inhibitindices=0,  # fakecells-specific parameters
+        useCalciumT=false, bias=0.1, jitter=0, gtincludebg=false,   # fakecells-specific parameters
+        seed=nothing, avg_rad=8.0, pavg=5.0, vres=1.0, psf_NA=0.6,  # naomi-specific parameters
+        inh_frac=0.0, inh_baseline_boost=2.0,                       # naomi-specific: fraction of neurons made inhibitory
+        issave=true, isload=true,
+        save_maxSNR_X=false, save_X=false, save_gtimg=false,
+        verbose=false)
     if dataset == :cbclface
         println("loading CBCL face dataset")
         load_cbcl()
@@ -359,16 +561,21 @@ function load_data(dataset; feature_name="", dataset_name="", SNR=10, user_ncell
     elseif dataset == :pcrnaseq
         load_pcrnaseq(dataset_name)
     elseif dataset == :fakecells
-        verbose && println((isload ? "Loading" : "Generating") * " image of fakecells")
-        load_fakecells(only2cells=false, dpath=dpath, sigma=sigma, SNR=SNR, user_ncells=user_ncells, imgsz=imgsz,
+        println((isload ? "Loading" : "Generating") * " image of fakecells")
+        load_fakecells(only2cells=false, dpath=dpath, sigma=sigma, SNR=SNR, mfncells=mfncells, imgsz=imgsz,
             fovsz=fovsz, lengthT=lengthT, orthogonal=orthogonal, bias=bias, useCalciumT=useCalciumT, jitter=jitter,
             inhibitindices=inhibitindices, gtincludebg=gtincludebg, issave=issave, isload=isload,
             save_maxSNR_X=save_maxSNR_X, save_X = save_X, save_gtimg=save_gtimg)
     elseif dataset == :fakecellsmall
         println((isload ? "Loading" : "Generating") * "image of fakecells with only two cells")
-        load_fakecells(only2cells=true, dpath=dpath, sigma=sigma, SNR=SNR, user_ncells=6, imgsz=(20,30),
+        load_fakecells(only2cells=true, dpath=dpath, sigma=sigma, SNR=SNR, mfncells=6, imgsz=(20,30),
             lengthT=lengthT, orthogonal=true, bias=bias, gtincludebg=gtincludebg, issave=issave, isload=isload,
             useCalciumT=useCalciumT,jitter=jitter, save_maxSNR_X=save_maxSNR_X, save_gtimg=save_gtimg)
+    elseif dataset == :naomi
+        println("loading naomi simulated dataset")
+        load_naomi(dpath=dpath, mfncells=mfncells, seed=seed, pavg=pavg, vres=vres, psf_NA=psf_NA,
+            avg_rad=avg_rad, inh_frac=inh_frac, inh_baseline_boost=inh_baseline_boost,
+            imgsz=imgsz, lengthT=lengthT, issave=issave, isload=isload, verbose=verbose)
     else
         error("Not supported dataset : $dataset")
     end
@@ -406,8 +613,8 @@ function imsave_data(dataset,fprefix,W,H,imgsz,lengthT; mssdwstr="", mssdhstr=""
         heatmapWH(fprefix, W, H; viewport_wsize = viewport_wsize, viewport_hsize = viewport_hsize,
             Wdivision = Wdivision, Hdivision = Hdivision,
             w_limit_factor=w_limit_factor, h_limit_factor=h_limit_factor)
-    elseif dataset == :fakecells
-        verbose && println("Saving image of fakecells")
+    elseif dataset in [:fakecells, :naomi]
+        verbose && println("Saving image of $(dataset) dataset")
         imsave_fakecell(fprefix,W,H,imgsz,lengthT; mssdwstr=mssdwstr, mssdhstr=mssdhstr,
             scalemtd=scalemtd, signedcolors=signedcolors, saveH=saveH)
     elseif dataset == :fakecellsmall
@@ -673,14 +880,14 @@ function plotH_data(fprefix, H; figsize = (800,400), space=0., title="",issave=t
 end
 
 #=========== Plot H ====================================================#
-function plotH_data(dataset, fprefix, H; resolution = (800,400), space=0., labels=string.(collect(1:size(H,1))),
+function plotH_data(dataset, fprefix, H; figsize = (800,400), space=0., labels=string.(collect(1:size(H,1))),
         show_legend=true, colors=distinguishable_colors(size(H,1); lchoices=range(0, stop=50, length=5)),
         ytickformat=values->["$value" for value in values])
     if dataset == :urban
         f = plotH_urban(H[2:7,:]; titles = ["2","3","4","5","6","7"])
         save(fprefix*"_H.png",f)
     else
-        f = plotH_data(fprefix, H, resolution=resolution, space=space, labels=labels, show_legend=show_legend,
+        f = plotH_data(fprefix, H, figsize=figsize, space=space, labels=labels, show_legend=show_legend,
                         ytickformat=ytickformat, colors=colors)
     end
 end
